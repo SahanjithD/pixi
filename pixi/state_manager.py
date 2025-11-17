@@ -112,6 +112,29 @@ class StateManager:
         if person:
             self._state.recognized_person = person
 
+    def update_face_target(
+        self,
+        *,
+        face_id: str,
+        center_x: float,
+        center_y: float,
+        area: float,
+        confidence: float,
+    ) -> None:
+        """Lightweight update when a face stays in view to aid tracking behaviour."""
+
+        self._state.recognized_person = face_id
+        self._last_interaction_ts = time.time()
+
+        # Seeing a confident face lowers caution slightly and builds confidence over time.
+        confidence_delta = 0.02 * self._clamp(confidence, 0.0, 1.0)
+        self._state.confidence = self._clamp(self._state.confidence + confidence_delta, 0.0, 1.0)
+        self._state.caution = self._clamp(self._state.caution - (confidence_delta * 0.6), 0.1, 1.0)
+
+        # When someone is close-by (large area), satiate attention hunger a little.
+        if area > 0.02:
+            self._state.attention_hunger = self._clamp(self._state.attention_hunger - 0.01, 0.0, 1.0)
+
     def update_mood(self, new_mood: Mood) -> None:
         if self._state.mood != new_mood:
             print(f"[State] Mood changed from {self._state.mood.value} to {new_mood.value}")

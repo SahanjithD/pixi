@@ -7,7 +7,7 @@ The system allows the robot to **perceive, understand, and interact** with human
 
 ---
 
-## ⚙️ System Architecture
+## ⚙️ System Architecture 
 
 The robot's intelligence is structured in four main layers. This modular design allows for clear separation of concerns, making the system easier to build, debug, and upgrade.
 

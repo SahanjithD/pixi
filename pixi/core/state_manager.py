@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Deque, Optional
 
-from pixi.actions import ActionName
+from pixi.core.actions import ActionName
 
 
 class Mood(str, Enum):
@@ -212,4 +212,3 @@ class StateManager:
             "last_action": last_action_value,
             "recent_actions": [action.value for action in self._recent_actions],
         }
-

@@ -18,10 +18,23 @@ Pixi is a curious and adorable pet robot that perceives the world through vision
 ```
 .
 ├── pixi/
-│   ├── reasoning_engine.py  # LangChain chain + Groq integration
-│   └── state_manager.py     # Robot state tracking
+│   ├── core/                # State management, actions, reasoning
+│   │   ├── actions.py
+│   │   ├── reasoning_engine.py
+│   │   └── state_manager.py
+│   ├── audio/               # Hotword detection pipeline
+│   │   └── hotword.py
+│   ├── vision/              # MediaPipe-based perception & preview server
+│   │   ├── perception.py
+│   │   └── web_preview_server.py
+│   └── runners/             # CLI entry points for different runtime modes
+│       ├── run_audio_hotword.py
+│       ├── run_realtime.py
+│       └── run_vision_only.py
 ├── requirements.txt         # Python dependencies
 ├── instructions.md          # Detailed architecture notes
+├── scripts/
+│   └── web_preview.py       # Legacy CLI wrapper (uses new vision modules)
 └── README.md
 ```
 
@@ -30,6 +43,7 @@ Pixi is a curious and adorable pet robot that perceives the world through vision
 - Python 3.10+
 - Groq API key ([request one](https://console.groq.com/keys))
 - (Optional) Local LLM runtime such as Ollama for development on powerful hardware
+- Picovoice AccessKey for Porcupine hotword detection ([create one](https://console.picovoice.ai/))
 
 ## Setup
 
@@ -48,15 +62,57 @@ Pixi is a curious and adorable pet robot that perceives the world through vision
    GROQ_MODEL_NAME="llama-3.1-8b-instant"
    # Optional for local LLM fallback
    # OLLAMA_MODEL=llama3
+   # Required for Porcupine hotword detection
+    PICOVOICE_ACCESS_KEY="your_picovoice_access_key"
    ```
 
 ## Running the Reasoning Engine
 
 Simulate Pixi's decision making loop:
 ```powershell
-python -m pixi.reasoning_engine
+python -m pixi.core.reasoning_engine
 ```
 The script prints sensor events, the selected action, and a short explanation of Pixi's behavior.
+
+## Testing Vision Processing Only
+
+Run the vision loop without the reasoning engine:
+
+```powershell
+python -m pixi.runners.run_vision_only --display
+```
+
+Remove `--display` if you only want console logs.
+
+## Testing Audio Hotword Detection Only
+
+Run Porcupine in isolation to validate your microphone and keywords:
+
+```powershell
+python -m pixi.runners.run_audio_hotword --hotword-file "Wake-up-buddy_en_raspberry-pi_v3_0_0/Wake-up-buddy_en_raspberry-pi_v3_0_0.ppn"
+```
+
+Omit `--hotword-file` to listen for the default `picovoice` wake word, or repeat `--hotword-keyword` for multiple built-in triggers. Use `pvrecorder --show_audio_devices` to discover input device indices and pass one with `--hotword-device-index` if needed.
+
+## Browser Camera Preview
+
+When you want a smoother camera view than the OpenCV window provides, launch the MJPEG preview server:
+
+```powershell
+python -m scripts.web_preview --host 127.0.0.1 --port 5000
+```
+
+Then open `http://127.0.0.1:5000/` in your browser to watch the stream with the same face/gesture overlays shown in the OpenCV preview. Use `--no-annotations` if you prefer raw frames. The camera device can only be owned by one process at a time, so stop the realtime loop (or run it with a prerecorded source) when you launch the preview server.
+
+## Hotword Detection (Porcupine)
+
+To iterate on audio-only interactions, enable the Picovoice Porcupine listener while disabling the camera pipeline:
+
+```powershell
+python -m pixi.runners.run_realtime --disable-vision --enable-hotword
+```
+
+By default Pixi listens for the built-in `picovoice` wake word. Supply additional built-in keywords with `--hotword-keyword porcupine` (can be repeated) or custom `.ppn` files via `--hotword-file path/to/keyword.ppn`. Select a specific microphone using `--hotword-device-index` (see `pvrecorder --show_audio_devices`).
 
 ## Next Steps
 

@@ -7,8 +7,8 @@ from typing import Any, Dict, Iterable, List, Optional
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
-from pixi.actions import ACTION_REGISTRY, ActionName
-from pixi.state_manager import StateManager
+from pixi.core.actions import ACTION_REGISTRY, ActionName
+from pixi.core.state_manager import StateManager
 
 PROMPT_TEMPLATE = (
     "You are Pixi's cognition module, responsible for choosing exactly one high-level action.\n"
@@ -25,7 +25,6 @@ PROMPT_TEMPLATE = (
     "- Only return actions from the catalogue. Vary choices to avoid repetition.\n\n"
     "Respond with valid JSON: {{\"action\": \"<ACTION_NAME>\", \"reason\": \"<brief rationale>\"}}."
 )
-
 
 
 class ReasoningEngine:

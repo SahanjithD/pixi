@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Generator, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Generator, Iterable, List, Optional, Sequence, Tuple
 
 import time
 
@@ -70,6 +70,8 @@ class VisionProcessor:
         smoothing_factor: float = 0.6,
         tracking_timeout: float = 1.2,
         face_detection_interval: int = 10,
+        frame_callback: Optional[Callable[[np.ndarray], None]] = None,
+        frame_callback_use_annotations: bool = True,
     ) -> None:
         self._min_face_confidence = min_face_confidence
         self._camera_index = camera_index
@@ -86,9 +88,13 @@ class VisionProcessor:
         self._face_id_counter = 0
         self._tracked_face: Optional[TrackedFace] = None
         self._last_primary_face_box: Optional[Tuple[float, float]] = None
+        self._frame_callback = frame_callback
+        self._frame_callback_use_annotations = frame_callback_use_annotations
 
         self._use_tasks_detector = False
         model_path = Path(__file__).with_name("blaze_face_short_range.tflite")
+        if not model_path.exists():
+            model_path = Path(__file__).resolve().parent.parent / "blaze_face_short_range.tflite"
         if _TASKS_AVAILABLE and _has_tasks_image() and model_path.exists():
             try:
                 base_options = BaseOptions(model_asset_path=str(model_path))
@@ -409,6 +415,8 @@ class VisionProcessor:
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._frame_height))
 
         window_name = "Pixi Vision" if display else None
+        if not display and self._frame_callback is not None:
+            window_name = None
         try:
             while True:
                 ret, frame = capture.read()
@@ -425,12 +433,19 @@ class VisionProcessor:
                 detect_hands = self._enable_hands and (self._frame_counter % self._hand_interval == 0)
                 events = self.process_frame(processing_frame, detect_hands=detect_hands)
 
-                if display:
-                    annotated = processing_frame.copy()
-                    self._draw_annotations(annotated, events)
-                    cv2.imshow(window_name, annotated)
+                annotated_frame: Optional[np.ndarray] = None
+                if display or (self._frame_callback is not None and self._frame_callback_use_annotations):
+                    annotated_frame = processing_frame.copy()
+                    self._draw_annotations(annotated_frame, events)
+
+                if display and annotated_frame is not None:
+                    cv2.imshow(window_name, annotated_frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
+
+                if self._frame_callback is not None:
+                    frame_for_callback = annotated_frame if annotated_frame is not None else processing_frame
+                    self._frame_callback(frame_for_callback.copy())
 
                 yield events
         finally:

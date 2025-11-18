@@ -53,16 +53,15 @@ This is the robot's interface to the physical world.
 
 ### 2. Data Processing Layer
 This layer transforms raw sensor data into a structured format that the reasoning layer can understand.
-- **Vision Processing (OpenCV & MediaPipe):**
     - **Capture:** Use `OpenCV` to read frames from the camera.
     - **Detect:** Use `MediaPipe`'s pre-trained models for:
         - **Face Detection:** To know when a human is present and get their location in the frame.
         - **Facial Expression Recognition:** Analyze facial landmarks to infer emotions (e.g., smiling, surprised).
         - **Gesture Recognition:** Identify specific hand gestures (e.g., a wave, a thumbs-up).
     - **Output:** Generate simple text descriptions like `{"event": "face_detected", "position": [x, y], "emotion": "smile"}`.
-- **Audio Processing (SpeechRecognition):**
     - **Transcribe:** Use a library like `SpeechRecognition` (potentially with an engine like Whisper) to convert spoken words into text.
     - **Output:** `{"event": "speech_detected", "text": "hello Pixi"}`.
+        - **Hotword Detection:** Use Picovoice Porcupine to listen for wake words before streaming full audio into the LLM loop.
 
 ### 3. LangChain Reasoning Layer (The "Brain")
 This is the core of the robot's personality and decision-making. It receives the structured data from the processing layer and decides what to do next.

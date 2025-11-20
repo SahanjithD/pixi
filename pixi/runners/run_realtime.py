@@ -53,23 +53,34 @@ def main(
     preview_host: str = "0.0.0.0",
     preview_port: int = 5000,
     preview_annotations: bool = True,
+    preview_backend: str = "browser",
 ) -> None:
     state = StateManager()
     engine = ReasoningEngine(state_manager=state)
     frame_callback = None
     frame_callback_use_annotations = True
+
+    display_effective = display
     if web_preview and enable_vision:
-        broadcaster = FrameBroadcaster()
-        start_preview_server(
-            broadcaster,
-            host=preview_host,
-            port=preview_port,
-            title="Pixi Runtime Preview",
-        )
-        frame_callback = broadcaster.update
-        frame_callback_use_annotations = preview_annotations
+        if preview_backend == "browser":
+            broadcaster = FrameBroadcaster()
+            start_preview_server(
+                broadcaster,
+                host=preview_host,
+                port=preview_port,
+                title="Pixi Runtime Preview",
+            )
+            frame_callback = broadcaster.update
+            frame_callback_use_annotations = preview_annotations
+        elif preview_backend == "opencv":
+            display_effective = True
+            print("[Runtime] Web preview set to OpenCV window; starting annotated display.")
+        else:
+            raise ValueError(f"Unsupported preview backend: {preview_backend}")
     elif web_preview:
-        print("[Runtime] Web preview requested but vision is disabled; no frames will be served.")
+        print("[Runtime] Preview requested but vision is disabled; no frames will be served.")
+    elif preview_backend != "browser":
+        print("[Runtime] Ignoring --preview-backend because --web-preview was not provided.")
 
     vision: Optional[VisionProcessor] = None
     vision_stream = None
@@ -87,7 +98,7 @@ def main(
             frame_callback=frame_callback,
             frame_callback_use_annotations=frame_callback_use_annotations,
         )
-        vision_stream = vision.stream_events(display=display)
+        vision_stream = vision.stream_events(display=display_effective)
 
     stop_requested = False
 
@@ -270,7 +281,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--face-interval",
         type=int,
-        default=10,
+        default=5,
         help="Frames to keep tracking before re-running face detection.",
     )
     parser.add_argument(
@@ -310,7 +321,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--web-preview",
         action="store_true",
-        help="Serve the camera feed over HTTP while running.",
+        help="Expose a live preview (paired with --preview-backend).",
+    )
+    parser.add_argument(
+        "--preview-backend",
+        choices=("browser", "opencv"),
+        default="browser",
+        help="Select how the preview is rendered when --web-preview is set.",
     )
     parser.add_argument(
         "--preview-host",
@@ -364,6 +381,7 @@ def cli() -> None:
         preview_host=args.preview_host,
         preview_port=args.preview_port,
         preview_annotations=args.preview_annotations,
+        preview_backend=args.preview_backend,
     )
 
 

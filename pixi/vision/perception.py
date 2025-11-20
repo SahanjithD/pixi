@@ -28,8 +28,14 @@ except (ImportError, ModuleNotFoundError):
 
 
 def _has_tasks_image() -> bool:
+    if mp_python is None:
+        return False
+    if hasattr(mp_python, "Image") and hasattr(mp_python, "ImageFormat"):
+        return True
     vision_module = getattr(mp_python, "vision", None)
-    return vision_module is not None and hasattr(vision_module, "Image")
+    if vision_module is not None and hasattr(vision_module, "Image"):
+        return True
+    return hasattr(mp, "Image") and hasattr(mp, "ImageFormat")
 
 
 @dataclass(slots=True)
@@ -69,7 +75,7 @@ class VisionProcessor:
         enable_face_tracking: bool = True,
         smoothing_factor: float = 0.6,
         tracking_timeout: float = 1.2,
-        face_detection_interval: int = 10,
+        face_detection_interval: int = 5,
         frame_callback: Optional[Callable[[np.ndarray], None]] = None,
         frame_callback_use_annotations: bool = True,
     ) -> None:
@@ -168,13 +174,25 @@ class VisionProcessor:
 
     def _run_face_detector(self, rgb: np.ndarray) -> List:
         if self._use_tasks_detector:
+            mp_image = None
             try:
-                mp_image = mp_python.vision.Image(
-                    image_format=mp_python.vision.ImageFormat.SRGB,
-                    data=rgb,
-                )
+                if hasattr(mp, "Image") and hasattr(mp, "ImageFormat"):
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                elif hasattr(mp_python, "Image"):
+                    image_format = getattr(mp_python, "ImageFormat", None)
+                    if image_format is None and hasattr(mp_python, "vision"):
+                        image_format = getattr(mp_python.vision, "ImageFormat", None)
+                    if image_format is not None:
+                        mp_image = mp_python.Image(image_format=image_format.SRGB, data=rgb)
+                elif hasattr(mp_python, "vision") and hasattr(mp_python.vision, "Image"):
+                    mp_image = mp_python.vision.Image(
+                        image_format=mp_python.vision.ImageFormat.SRGB,
+                        data=rgb,
+                    )
             except AttributeError:
-                # Older MediaPipe build lacks the Image class; fall back to classical API.
+                mp_image = None
+
+            if mp_image is None:
                 self._use_tasks_detector = False
                 self._face_detector = mp.solutions.face_detection.FaceDetection(
                     model_selection=0,
@@ -318,7 +336,20 @@ class VisionProcessor:
             return self._tracked_face
 
         distance = float(np.hypot(center_x - self._tracked_face.center_x, center_y - self._tracked_face.center_y))
-        if distance > 0.25:
+        area_denominator = max(self._tracked_face.area, 1e-6)
+        relative_area_change = abs(area - self._tracked_face.area) / area_denominator
+
+        large_jump = distance > 0.28 or relative_area_change > 0.65
+        if large_jump:
+            # Treat abrupt shifts occurring within the timeout as the same face to avoid ID churn.
+            if now - self._tracked_face.last_seen <= self._tracking_timeout:
+                self._tracked_face.center_x = center_x
+                self._tracked_face.center_y = center_y
+                self._tracked_face.area = area
+                self._tracked_face.confidence = confidence
+                self._tracked_face.last_seen = now
+                return self._tracked_face
+
             self._face_id_counter += 1
             self._tracked_face = TrackedFace(
                 face_id=self._face_id_counter,
@@ -331,9 +362,16 @@ class VisionProcessor:
             return self._tracked_face
 
         alpha = self._smoothing_factor
+        if distance > 0.12:
+            alpha = min(0.95, alpha + 0.25)
+        if distance > 0.22:
+            alpha = 1.0
+        alpha = max(0.0, min(1.0, alpha))
+
+        area_alpha = max(alpha, 0.35)
         smoothed_center_x = (alpha * center_x) + ((1 - alpha) * self._tracked_face.center_x)
         smoothed_center_y = (alpha * center_y) + ((1 - alpha) * self._tracked_face.center_y)
-        smoothed_area = (0.2 * area) + (0.8 * self._tracked_face.area)
+        smoothed_area = (area_alpha * area) + ((1 - area_alpha) * self._tracked_face.area)
 
         self._tracked_face.center_x = smoothed_center_x
         self._tracked_face.center_y = smoothed_center_y

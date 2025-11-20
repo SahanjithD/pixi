@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--face-interval",
         type=int,
-        default=10,
+        default=5,
         help="Frames to keep tracking before re-running face detection.",
     )
     parser.add_argument(

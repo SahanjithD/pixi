@@ -7,6 +7,11 @@ from typing import Any, Dict, Iterable, List, Optional
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+try:  # Optional dependency for OpenRouter support
+    from langchain_openai import ChatOpenAI
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional import guard
+    ChatOpenAI = None  # type: ignore[assignment]
+
 from pixi.core.actions import ACTION_REGISTRY, ActionName
 from pixi.core.state_manager import StateManager
 
@@ -36,19 +41,44 @@ class ReasoningEngine:
         temperature: float = 0.4,
     ) -> None:
         load_dotenv()
+
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         groq_api_key = os.getenv("GROQ_API_KEY")
-        if not groq_api_key:
-            raise RuntimeError("Missing GROQ_API_KEY in environment.")
 
         self._state_manager = state_manager or StateManager()
         self._actions = ACTION_REGISTRY
-        model = model_name or os.getenv("GROQ_MODEL_NAME") or os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-        self._llm = ChatGroq(
-            groq_api_key=groq_api_key,
-            model_name=model,
-            temperature=temperature,
-        )
+        if openrouter_api_key:
+            if ChatOpenAI is None:
+                raise RuntimeError(
+                    "OpenRouter support requires the `langchain-openai` package. Install it with `pip install langchain-openai`."
+                )
+            model = model_name or os.getenv("OPENROUTER_MODEL_NAME") or "openai/gpt-4o-mini"
+            base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+            headers = {}
+            referer = os.getenv("OPENROUTER_REFERER")
+            title = os.getenv("OPENROUTER_TITLE")
+            if referer:
+                headers["HTTP-Referer"] = referer
+            if title:
+                headers["X-Title"] = title
+
+            self._llm = ChatOpenAI(
+                api_key=openrouter_api_key,
+                model=model,
+                base_url=base_url,
+                temperature=temperature,
+                default_headers=headers or None,
+            )
+        elif groq_api_key:
+            model = model_name or os.getenv("GROQ_MODEL_NAME") or os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+            self._llm = ChatGroq(
+                groq_api_key=groq_api_key,
+                model_name=model,
+                temperature=temperature,
+            )
+        else:
+            raise RuntimeError("Missing OPENROUTER_API_KEY or GROQ_API_KEY in environment.")
         self._chain = self._llm
 
     def decide_action(self, events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:

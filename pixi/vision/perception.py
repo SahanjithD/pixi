@@ -73,9 +73,9 @@ class VisionProcessor:
         enable_hands: bool = True,
         hand_detection_interval: int = 5,
         enable_face_tracking: bool = True,
-        smoothing_factor: float = 0.6,
+        smoothing_factor: float = 0.1,
         tracking_timeout: float = 1.2,
-        face_detection_interval: int = 5,
+        face_detection_interval: int = 0,
         frame_callback: Optional[Callable[[np.ndarray], None]] = None,
         frame_callback_use_annotations: bool = True,
     ) -> None:

@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--face-interval",
         type=int,
-        default=5,
+        default=0,
         help="Frames to keep tracking before re-running face detection.",
     )
     parser.add_argument(
@@ -98,9 +98,9 @@ def main(
     hand_interval: int = 5,
     enable_hands: bool = True,
     enable_face_tracking: bool = True,
-    face_smoothing: float = 0.6,
+    face_smoothing: float = 0.1,
     tracking_timeout: float = 1.2,
-    face_interval: int = 10,
+    face_interval: int = 0,
     sleep_seconds: float = 0.2,
 ) -> None:
     processor = VisionProcessor(
@@ -138,7 +138,7 @@ def main(
                         f"[Vision] {event.summary} (weight={event.weight:.2f}) -> {event.data}"
                     )
 
-            time.sleep(max(0.01, sleep_seconds))
+            # time.sleep(max(0.01, sleep_seconds))
     except RuntimeError as exc:
         print(f"[Vision] Error: {exc}")
         raise

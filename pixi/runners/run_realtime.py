@@ -54,6 +54,12 @@ def main(
     preview_port: int = 5000,
     preview_annotations: bool = True,
     preview_backend: str = "browser",
+    # New: event-driven decision controls
+    event_driven: bool = True,
+    min_interval: float = 0.15,
+    max_interval: float = 2.0,
+    move_threshold: float = 0.05,
+    area_threshold: float = 0.12,
 ) -> None:
     state = StateManager()
     engine = ReasoningEngine(state_manager=state)
@@ -101,6 +107,11 @@ def main(
         vision_stream = vision.stream_events(display=display_effective)
 
     stop_requested = False
+    # Track last decision context for event-driven triggering
+    last_decision_time = time.time()
+    last_face: Optional[tuple[float, float, float]] = None  # (cx, cy, area)
+    last_gesture: Optional[str] = None
+    last_hotword: Optional[str] = None
 
     def _request_stop(_sig: int, _frame: object) -> None:
         nonlocal stop_requested
@@ -143,34 +154,31 @@ def main(
                 except StopIteration:
                     break
 
+            # Update state from primary face if tracking is enabled
+            primary_face = None  # (cx, cy, area, confidence)
             if enable_face_tracking and enable_vision:
                 for event in vision_events:
                     if event.summary == "face_detected" and event.data.get("is_primary", False):
-                        tracking_id = event.data.get("tracking_id")
-                        face_id = (
-                            f"face_{int(tracking_id)}"
-                            if isinstance(tracking_id, (int, float))
-                            else "face_primary"
-                        )
-                        center_x = float(
-                            event.data.get("smoothed_center_x", event.data.get("center_x", 0.5))
-                        )
-                        center_y = float(
-                            event.data.get("smoothed_center_y", event.data.get("center_y", 0.5))
-                        )
+                        center_x = float(event.data.get("smoothed_center_x", event.data.get("center_x", 0.5)))
+                        center_y = float(event.data.get("smoothed_center_y", event.data.get("center_y", 0.5)))
                         area = float(event.data.get("smoothed_area", event.data.get("area", 0.0)))
-                        confidence = float(
-                            event.data.get("tracking_confidence", event.data.get("confidence", event.weight))
-                        )
-                        state.update_face_target(
-                            face_id=face_id,
-                            center_x=center_x,
-                            center_y=center_y,
-                            area=area,
-                            confidence=confidence,
-                        )
+                        confidence = float(event.data.get("tracking_confidence", event.data.get("confidence", event.weight)))
+                        tracking_id = event.data.get("tracking_id")
+                        face_id = f"face_{int(tracking_id)}" if isinstance(tracking_id, (int, float)) else "face_primary"
+                        state.update_face_target(face_id=face_id, center_x=center_x, center_y=center_y, area=area, confidence=confidence)
+                        primary_face = (center_x, center_y, area, confidence)
 
             combined_events: List[PerceptionEvent] = list(vision_events)
+            # Detect gesture presence/name for triggering
+            current_gesture: Optional[str] = None
+            for e in vision_events:
+                if e.summary == "hand_gesture":
+                    current_gesture = str(e.data.get("gesture", "unknown"))
+                    break
+
+            # Hotword events (if enabled)
+            audio_events: List[AudioEvent] = []
+            current_hotword: Optional[str] = None
             if hotword_detector is not None:
                 try:
                     audio_events = hotword_detector.drain_events()
@@ -181,19 +189,59 @@ def main(
                     for audio_event in audio_events:
                         keyword = audio_event.data.get("keyword", "unknown")
                         print(f"[Hotword] Detected keyword '{keyword}'.")
+                        current_hotword = keyword
                     combined_events.extend(audio_events)
 
-            payload = _events_to_payload(combined_events)
-            if not payload:
-                # Provide a small idle event so the LLM still receives context.
-                payload = [{"summary": "no_event", "weight": 0.05}]
+            # Decide when to call the reasoning engine
+            now = time.time()
+            should_decide = False
 
-            decision = engine.decide_action(payload)
-            action = decision["action"]
-            reason = decision["reason"]
-            print(f"[Runtime] Action: {action.value} — {reason}")
+            if not event_driven:
+                # Original polling mode: every cooldown
+                should_decide = (now - last_decision_time) >= cooldown
+            else:
+                # Event-driven triggers
+                face_trigger = False
+                if primary_face is not None:
+                    cx, cy, area, _conf = primary_face
+                    if last_face is None:
+                        face_trigger = True  # face appeared
+                    else:
+                        lx, ly, la = last_face
+                        moved = (abs(cx - lx) >= move_threshold) or (abs(cy - ly) >= move_threshold)
+                        area_changed = (la == 0.0 and area > 0.0) or (la > 0.0 and abs(area - la) / la >= area_threshold)
+                        face_trigger = moved or area_changed
+                elif last_face is not None:
+                    face_trigger = True  # face disappeared
 
-            time.sleep(cooldown)
+                gesture_trigger = (current_gesture is not None and current_gesture != last_gesture)
+                hotword_trigger = (current_hotword is not None)
+
+                heartbeat = (now - last_decision_time) >= max_interval
+                # Respect minimum spacing between decisions
+                if (face_trigger or gesture_trigger or hotword_trigger or heartbeat) and (now - last_decision_time) >= min_interval:
+                    should_decide = True
+
+            if should_decide:
+                payload = _events_to_payload(combined_events)
+                if not payload:
+                    payload = [{"summary": "no_event", "weight": 0.05}]
+                decision = engine.decide_action(payload)
+                action = decision["action"]
+                reason = decision["reason"]
+                print(f"[Runtime] Action: {action.value} — {reason}")
+
+                # Update last decision context
+                last_decision_time = now
+                last_gesture = current_gesture
+                last_hotword = current_hotword
+                last_face = (primary_face[0], primary_face[1], primary_face[2]) if primary_face else None
+
+            # Sleep briefly; in polling mode we already throttle via cooldown above
+            if not event_driven:
+                time.sleep(max(0.0, cooldown - max(0.0, time.time() - now)))
+            else:
+                time.sleep(0.01)
     finally:
         if hotword_detector is not None:
             hotword_detector.close()
@@ -353,6 +401,15 @@ def parse_args() -> argparse.Namespace:
         help="Stream raw frames in the web preview without overlays.",
     )
     parser.set_defaults(preview_annotations=True)
+
+    # New CLI for event-driven decisions
+    parser.add_argument("--event-driven", dest="event_driven", action="store_true", help="Only decide when perceptual state changes (default).")
+    parser.add_argument("--polling", dest="event_driven", action="store_false", help="Decide every --cooldown seconds regardless of changes.")
+    parser.set_defaults(event_driven=True)
+    parser.add_argument("--min-interval", type=float, default=0.15, help="Minimum seconds between decisions in event-driven mode.")
+    parser.add_argument("--max-interval", type=float, default=2.0, help="Maximum seconds between decisions (heartbeat) in event-driven mode.")
+    parser.add_argument("--move-threshold", type=float, default=0.05, help="Face move threshold (normalized) to trigger a decision.")
+    parser.add_argument("--area-threshold", type=float, default=0.12, help="Relative face area delta to trigger a decision (e.g., 0.12 = 12%).")
     return parser.parse_args()
 
 
@@ -382,6 +439,11 @@ def cli() -> None:
         preview_port=args.preview_port,
         preview_annotations=args.preview_annotations,
         preview_backend=args.preview_backend,
+        event_driven=args.event_driven,
+        min_interval=args.min_interval,
+        max_interval=args.max_interval,
+        move_threshold=args.move_threshold,
+        area_threshold=args.area_threshold,
     )
 
 
